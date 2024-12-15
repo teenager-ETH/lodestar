@@ -1,11 +1,10 @@
 import {ChainForkConfig} from "@lodestar/config";
-import {ForkExecution, ForkSeq, isForkExecution} from "@lodestar/params";
+import {ForkExecution, ForkSeq, isForkExecution, isForkLightClient} from "@lodestar/params";
 import {
   CachedBeaconStateAllForks,
   CachedBeaconStateBellatrix,
   CachedBeaconStateCapella,
   CachedBeaconStateExecutions,
-  computeEpochAtSlot,
   computeTimeAtSlot,
   getCurrentEpoch,
   getExpectedWithdrawals,
@@ -143,8 +142,15 @@ export async function produceBlockBody<T extends BlockType>(
     ? Object.assign({}, commonBlockBody)
     : await produceCommonBlockBody.call(this, blockType, currentState, blockAttr);
 
-  const {attestations, deposits, voluntaryExits, attesterSlashings, proposerSlashings, blsToExecutionChanges} =
-    blockBody;
+  const {
+    attestations,
+    deposits,
+    voluntaryExits,
+    attesterSlashings,
+    proposerSlashings,
+    syncAggregate,
+    blsToExecutionChanges,
+  } = blockBody;
 
   Object.assign(logMeta, {
     attestations: attestations.length,
@@ -153,6 +159,12 @@ export async function produceBlockBody<T extends BlockType>(
     attesterSlashings: attesterSlashings.length,
     proposerSlashings: proposerSlashings.length,
   });
+
+  if (isForkLightClient(fork)) {
+    Object.assign(logMeta, {
+      syncAggregateParticipants: syncAggregate.syncCommitteeBits.getTrueBitIndexes().length,
+    });
+  }
 
   const endExecutionPayload = stepsMetrics?.startTimer();
   if (isForkExecution(fork)) {
@@ -608,7 +620,6 @@ export async function produceCommonBlockBody<T extends BlockType>(
       ? this.metrics?.executionBlockProductionTimeSteps
       : this.metrics?.builderBlockProductionTimeSteps;
 
-  const blockEpoch = computeEpochAtSlot(slot);
   const fork = currentState.config.getForkName(slot);
 
   // TODO:
@@ -653,7 +664,7 @@ export async function produceCommonBlockBody<T extends BlockType>(
   }
 
   const endSyncAggregate = stepsMetrics?.startTimer();
-  if (blockEpoch >= this.config.ALTAIR_FORK_EPOCH) {
+  if (ForkSeq[fork] >= ForkSeq.altair) {
     const syncAggregate = this.syncContributionAndProofPool.getAggregate(parentSlot, parentBlockRoot);
     this.metrics?.production.producedSyncAggregateParticipants.observe(
       syncAggregate.syncCommitteeBits.getTrueBitIndexes().length
